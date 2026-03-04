@@ -15,5 +15,6 @@ public class EvalEvent {
     private Long userId;
     private String promptText;
     private String modelName;
+    private String cacheKey;  // 新增
     private LocalDateTime eventTime;
 }

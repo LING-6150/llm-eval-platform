@@ -118,4 +118,27 @@ public class RedisLuaScriptConstant {
             redis.call("HDEL", userThumbKey, blogId)
             return 1
             """, Long.class);
+
+    /**
+     * 防重复提交 Lua 脚本
+     * KEYS[1] -- 提交去重键（如 eval:dedup:{userId}:{promptHash}）
+     * ARGV[1] -- 过期时间（秒）
+     * 返回:
+     * 0: 重复提交，拒绝
+     * 1: 首次提交，允许
+     */
+    public static final RedisScript<Long> EVAL_DEDUP_SCRIPT = new DefaultRedisScript<>("""
+        local key = KEYS[1]
+        
+        if redis.call('EXISTS', key) == 1 then
+            return 0
+        end
+        
+        redis.call('SET', key, 1)
+        redis.call('EXPIRE', key, 60)
+        return 1
+        """, Long.class);
+    
 }
+
+

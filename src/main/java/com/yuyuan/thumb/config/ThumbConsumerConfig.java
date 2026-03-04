@@ -58,10 +58,8 @@ public class ThumbConsumerConfig<T> implements PulsarListenerConsumerBuilderCust
     @Bean
     public DeadLetterPolicy deadLetterPolicy() {
         return DeadLetterPolicy.builder()
-                // 最大重试次数
                 .maxRedeliverCount(3)
-                // 死信主题名称
-                .deadLetterTopic("thumb-dlq-topic")
+                .deadLetterTopic("eval-dlq-topic")  // 改这里
                 .build();
     }
 

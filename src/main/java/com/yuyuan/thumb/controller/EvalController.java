@@ -2,7 +2,9 @@ package com.yuyuan.thumb.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yuyuan.thumb.common.BaseResponse;
+import com.yuyuan.thumb.common.ErrorCode;
 import com.yuyuan.thumb.common.ResultUtils;
+import com.yuyuan.thumb.constant.RedisLuaScriptConstant;
 import com.yuyuan.thumb.listener.thumb.msg.EvalEvent;
 import com.yuyuan.thumb.model.dto.eval.SubmitEvalRequest;
 import com.yuyuan.thumb.model.entity.EvalTask;
@@ -12,15 +14,15 @@ import com.yuyuan.thumb.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.pulsar.core.PulsarTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-
-import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
 @RequestMapping("/eval")
@@ -31,6 +33,7 @@ public class EvalController {
     private final EvalTaskService evalTaskService;
     private final UserService userService;
     private final PulsarTemplate<EvalEvent> pulsarTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     @PostMapping("/submit")
     public BaseResponse<Long> submitEval(
@@ -39,21 +42,53 @@ public class EvalController {
 
         User loginUser = userService.getLoginUser(httpRequest);
 
+        // 防重复提交：同一用户同一prompt 60秒内只能提交一次
+        String promptHash = String.valueOf(request.getPromptText().hashCode());
+        String dedupKey = "eval:dedup:" + loginUser.getId() + ":" + promptHash;
+        Long dedupResult = redisTemplate.execute(
+                RedisLuaScriptConstant.EVAL_DEDUP_SCRIPT,
+                List.of(dedupKey),
+                "60"
+        );
+        if (dedupResult != null && dedupResult == 0) {
+            throw new RuntimeException("Duplicate submission, please wait 60 seconds");
+        }
+
+        // Prompt结果缓存检查：相同prompt+model直接返回缓存结果
+        String modelName = request.getModelName() != null
+                ? request.getModelName() : "deepseek-chat";
+        String cacheKey = "eval:cache:" + promptHash + ":" + modelName;
+        Object cachedResult = redisTemplate.opsForValue().get(cacheKey);
+        if (cachedResult != null) {
+            log.info("Cache hit for prompt hash: {}, model: {}", promptHash, modelName);
+            // 创建一个已完成的任务记录返回
+            EvalTask cachedTask = new EvalTask();
+            cachedTask.setUserId(loginUser.getId());
+            cachedTask.setPromptText(request.getPromptText());
+            cachedTask.setModelName(modelName);
+            cachedTask.setStatus("completed");
+            cachedTask.setResultText(cachedResult.toString());
+            cachedTask.setTokenCount(0);
+            cachedTask.setLatency(0L);
+            evalTaskService.save(cachedTask);
+            return ResultUtils.success(cachedTask.getId());
+        }
+
         // 创建任务记录
         EvalTask task = new EvalTask();
         task.setUserId(loginUser.getId());
         task.setPromptText(request.getPromptText());
-        task.setModelName(request.getModelName() != null
-                ? request.getModelName() : "deepseek-chat");
+        task.setModelName(modelName);
         task.setStatus("pending");
         evalTaskService.save(task);
 
-        // 发送到Pulsar
+        // 发送到Pulsar（携带cacheKey，Consumer完成后写缓存）
         EvalEvent event = EvalEvent.builder()
                 .taskId(task.getId())
                 .userId(loginUser.getId())
                 .promptText(request.getPromptText())
-                .modelName(task.getModelName())
+                .modelName(modelName)
+                .cacheKey(cacheKey)
                 .eventTime(LocalDateTime.now())
                 .build();
 
@@ -84,6 +119,7 @@ public class EvalController {
         EvalTask task = evalTaskService.getById(taskId);
         return ResultUtils.success(task);
     }
+
     @GetMapping("/stats")
     public BaseResponse<Map<String, Object>> getStats(HttpServletRequest httpRequest) {
         userService.getLoginUser(httpRequest);
@@ -93,11 +129,9 @@ public class EvalController {
                         .eq(EvalTask::getStatus, "completed")
         );
 
-        // 按模型分组统计
         Map<String, List<EvalTask>> byModel = allTasks.stream()
                 .collect(Collectors.groupingBy(EvalTask::getModelName));
 
-        // 模型单价（每1000 tokens的美元价格）
         Map<String, Double> modelPricing = Map.of(
                 "deepseek-chat", 0.001,
                 "gpt-3.5-turbo", 0.002,
@@ -130,7 +164,6 @@ public class EvalController {
                 })
                 .collect(Collectors.toList());
 
-        // 总体统计
         Map<String, Object> result = new HashMap<>();
         result.put("totalTasks", allTasks.size());
         result.put("totalTokens", allTasks.stream().mapToInt(EvalTask::getTokenCount).sum());
@@ -138,5 +171,4 @@ public class EvalController {
 
         return ResultUtils.success(result);
     }
-
 }

@@ -11,6 +11,7 @@ import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.SubscriptionType;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.pulsar.annotation.PulsarListener;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +29,8 @@ public class EvalConsumer {
 
     private final EvalTaskService evalTaskService;
 
+    private final RedisTemplate<String, Object> redisTemplate;
+
     @Value("${deepseek.api-key}")
     private String apiKey;
 
@@ -39,7 +42,10 @@ public class EvalConsumer {
             topics = "eval-topic",
             schemaType = SchemaType.JSON,
             batch = true,
-            subscriptionType = SubscriptionType.Shared
+            subscriptionType = SubscriptionType.Shared,
+            negativeAckRedeliveryBackoff = "negativeAckRedeliveryBackoff",
+            ackTimeoutRedeliveryBackoff = "ackTimeoutRedeliveryBackoff",
+            deadLetterPolicy = "deadLetterPolicy"
     )
     public void processBatch(List<Message<EvalEvent>> messages) {
         log.info("EvalConsumer processBatch: {}", messages.size());
@@ -60,6 +66,18 @@ public class EvalConsumer {
                 long latency = System.currentTimeMillis() - startTime;
 
                 task.setStatus("completed");
+
+                // 写入prompt结果缓存，TTL 1小时
+                if (event.getCacheKey() != null) {
+                    redisTemplate.opsForValue().set(
+                            event.getCacheKey(),
+                            result,
+                            1,
+                            java.util.concurrent.TimeUnit.HOURS
+                    );
+                    log.info("Cached result for key: {}", event.getCacheKey());
+                }
+
                 task.setResultText(result);
                 task.setLatency(latency);
                 task.setTokenCount(estimateTokens(event.getPromptText(), result));
