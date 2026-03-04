@@ -1,5 +1,7 @@
 package com.yuyuan.thumb.listener.eval;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yuyuan.thumb.listener.thumb.msg.EvalEvent;
 import com.yuyuan.thumb.model.entity.EvalTask;
 import com.yuyuan.thumb.service.EvalTaskService;
@@ -29,6 +31,9 @@ public class EvalConsumer {
     @Value("${deepseek.api-key}")
     private String apiKey;
 
+    @Value("${openai.api-key}")
+    private String openaiApiKey;
+
     @PulsarListener(
             subscriptionName = "eval-subscription",
             topics = "eval-topic",
@@ -51,7 +56,7 @@ public class EvalConsumer {
 
             try {
                 long startTime = System.currentTimeMillis();
-                String result = callDeepSeek(event.getPromptText());
+                String result = callLLM(event.getPromptText(), event.getModelName());
                 long latency = System.currentTimeMillis() - startTime;
 
                 task.setStatus("completed");
@@ -71,6 +76,12 @@ public class EvalConsumer {
         }
     }
 
+    private String callLLM(String promptText, String modelName) throws Exception {
+        return switch (modelName) {
+            case "gpt-3.5-turbo", "gpt-4" -> callOpenAI(promptText, modelName);
+            default -> callDeepSeek(promptText);
+        };
+    }
     private String callDeepSeek(String promptText) throws Exception {
         String requestBody = """
                 {
@@ -96,12 +107,45 @@ public class EvalConsumer {
         }
 
         String body = response.body();
-        int start = body.indexOf("\"content\":\"") + 11;
-        int end = body.indexOf("\"", start);
-        return body.substring(start, end);
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(body);
+        return root.path("choices").get(0).path("message").path("content").asText();
+    }
+
+
+    private String callOpenAI(String promptText, String modelName) throws Exception {
+        String requestBody = """
+            {
+                "model": "%s",
+                "messages": [{"role": "user", "content": "%s"}],
+                "max_tokens": 1024
+            }
+            """.formatted(modelName, promptText.replace("\"", "\\\""));
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.openai.com/v1/chat/completions"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + openaiApiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+
+        HttpResponse<String> response = client.send(request,
+                HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("OpenAI API error: " + response.statusCode()
+                    + " " + response.body());
+        }
+
+        String body = response.body();
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(body);
+        return root.path("choices").get(0).path("message").path("content").asText();
     }
 
     private int estimateTokens(String prompt, String result) {
         return (prompt.length() + result.length()) / 4;
     }
+
 }
