@@ -1,0 +1,24 @@
+version: "3.8"
+networks:
+  backend:
+    driver: bridge
+services:
+  tidb:
+    image: pingcap/tidb:latest
+    container_name: tidb
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    networks:
+      - backend
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpwd
+    ports:
+      - "3307:3306"
+    networks:
+      - backend
+    depends_on:
+      - tidb

@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-md font-medium transition-colors duration-200;
+  }
+  .btn-primary {
+    @apply bg-primary text-white hover:bg-opacity-90;
+  }
+  .btn-danger {
+    @apply bg-danger text-white hover:bg-opacity-90;
+  }
+  .btn-outline {
+    @apply border border-gray-300 hover:bg-gray-100;
+  }
+  .card {
+    @apply bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-300;
+  }
+  .container-custom {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+}
+
+/* 基础样式重置 */
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  @apply bg-gray-50 text-gray-800;
+}
+
+a {
+  @apply text-primary hover:text-primary-dark no-underline;
+}
+
+#app {
+  @apply min-h-screen w-full;
+}

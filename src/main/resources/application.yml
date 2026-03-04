@@ -1,0 +1,47 @@
+spring:
+  application.name: thumb-backend
+  mvc:
+    servlet:
+      path: /api
+  profiles:
+    active: local
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:4000/thumb_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password:
+  data:
+    redis:
+      database: 0
+      host: localhost
+      password:
+      timeout: 5000
+      port: 6379
+  pulsar:
+    client:
+      service-url: pulsar://localhost:6650
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+server:
+  port: 9199
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  metrics:
+    distribution:
+      percentiles:
+        http:
+          server:
+            requests: 0.5, 0.75, 0.9, 0.95, 0.99
+
