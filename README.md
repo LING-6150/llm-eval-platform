@@ -6,29 +6,7 @@ An asynchronous LLM evaluation platform designed to benchmark multiple AI models
 
 ## Architecture
 
-```
-Vue 3 Frontend
-      │
-      ▼
-Spring Boot API
-      │
-      ├── Redis Lua (atomic dedup + prompt caching)
-      │
-      ▼
-Apache Pulsar Queue
-      │
-      ▼
-EvalConsumer Worker
-      │
-      ├── OpenAI / DeepSeek APIs
-      │
-      ├── TiDB (result persistence)
-      │
-      └── Elasticsearch (search indexing)
-      │
-      ▼
-Prometheus → Grafana (observability)
-```
+![Submit Page](docs/screenshots/system.png)
 
 ---
 
@@ -80,6 +58,25 @@ Prometheus → Grafana (observability)
 - Evaluation results indexed into Elasticsearch after completion
 - Supports full-text search on prompt content
 - Multi-dimensional filtering by model, status, and keywords
+
+---
+
+### Why Async Evaluation?
+
+LLM inference latency ranges from 2–37 seconds depending on provider.
+To prevent blocking API requests, evaluation tasks are processed asynchronously via Apache Pulsar.
+
+### Why Redis Lua Scripts?
+
+Atomic Lua scripts prevent race conditions when multiple users submit identical prompts simultaneously.
+
+### Why Elasticsearch?
+
+Evaluation results are indexed into Elasticsearch to enable fast full-text search and analytics over prompt content.
+
+### Why TiDB?
+
+TiDB provides horizontally scalable SQL storage for evaluation results and task metadata.
 
 ---
 
