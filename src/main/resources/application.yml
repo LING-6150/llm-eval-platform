@@ -30,6 +30,9 @@ knife4j:
   setting:
     language: zh_cn
 
+  elasticsearch:
+    uris: http://localhost:9200
+
 server:
   port: 9199
 

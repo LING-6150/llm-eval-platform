@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yuyuan.thumb.listener.thumb.msg.EvalEvent;
 import com.yuyuan.thumb.model.entity.EvalTask;
+import com.yuyuan.thumb.model.entity.EvalTaskDocument;
 import com.yuyuan.thumb.service.EvalTaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,12 +15,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.pulsar.annotation.PulsarListener;
 import org.springframework.stereotype.Service;
+import com.yuyuan.thumb.repository.EvalTaskEsRepository;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -28,6 +29,8 @@ import java.util.List;
 public class EvalConsumer {
 
     private final EvalTaskService evalTaskService;
+
+    private final EvalTaskEsRepository evalTaskEsRepository;
 
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -84,6 +87,20 @@ public class EvalConsumer {
                 evalTaskService.updateById(task);
 
                 log.info("Eval task {} completed, latency={}ms", event.getTaskId(), latency);
+
+                // 同步写入ES
+                EvalTaskDocument doc = new EvalTaskDocument();
+                doc.setId(task.getId().toString());
+                doc.setUserId(task.getUserId());
+                doc.setPromptText(task.getPromptText());
+                doc.setModelName(task.getModelName());
+                doc.setStatus(task.getStatus());
+                doc.setTokenCount(task.getTokenCount());
+                doc.setLatency(task.getLatency());
+                doc.setResultText(task.getResultText());
+                doc.setCreateTime(task.getCreateTime() != null ? task.getCreateTime().toString() : null);
+                evalTaskEsRepository.save(doc);
+                log.info("Eval task {} indexed to ES", task.getId());
 
             } catch (Exception e) {
                 log.error("Eval task {} failed: {}", event.getTaskId(), e.getMessage());

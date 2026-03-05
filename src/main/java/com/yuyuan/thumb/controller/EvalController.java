@@ -2,12 +2,12 @@ package com.yuyuan.thumb.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yuyuan.thumb.common.BaseResponse;
-import com.yuyuan.thumb.common.ErrorCode;
 import com.yuyuan.thumb.common.ResultUtils;
 import com.yuyuan.thumb.constant.RedisLuaScriptConstant;
 import com.yuyuan.thumb.listener.thumb.msg.EvalEvent;
 import com.yuyuan.thumb.model.dto.eval.SubmitEvalRequest;
 import com.yuyuan.thumb.model.entity.EvalTask;
+import com.yuyuan.thumb.model.entity.EvalTaskDocument;
 import com.yuyuan.thumb.model.entity.User;
 import com.yuyuan.thumb.service.EvalTaskService;
 import com.yuyuan.thumb.service.UserService;
@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.pulsar.core.PulsarTemplate;
 import org.springframework.web.bind.annotation.*;
+import com.yuyuan.thumb.repository.EvalTaskEsRepository;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -34,6 +35,11 @@ public class EvalController {
     private final UserService userService;
     private final PulsarTemplate<EvalEvent> pulsarTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final EvalTaskEsRepository evalTaskEsRepository;
+
+
+    private final org.springframework.data.elasticsearch.core.ElasticsearchOperations elasticsearchOperations;
+
 
     @PostMapping("/submit")
     public BaseResponse<Long> submitEval(
@@ -170,5 +176,41 @@ public class EvalController {
         result.put("modelStats", modelStats);
 
         return ResultUtils.success(result);
+    }
+    @GetMapping("/search")
+    public BaseResponse<List<EvalTaskDocument>> searchTasks(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String modelName,
+            @RequestParam(required = false) String status,
+            HttpServletRequest httpRequest) {
+
+        userService.getLoginUser(httpRequest);
+
+        if (modelName != null && !modelName.isEmpty()) {
+            return ResultUtils.success(evalTaskEsRepository.findByModelName(modelName));
+        }
+
+        if (status != null && !status.isEmpty()) {
+            return ResultUtils.success(evalTaskEsRepository.findByStatus(status));
+        }
+
+        if (keyword != null && !keyword.isEmpty()) {
+            // 全文搜索prompt
+            org.springframework.data.elasticsearch.core.query.StringQuery stringQuery =
+                    new org.springframework.data.elasticsearch.core.query.StringQuery(
+                            "{\"match\": {\"promptText\": \"" + keyword + "\"}}"
+                    );
+            org.springframework.data.elasticsearch.core.SearchHits<EvalTaskDocument> hits =
+                    elasticsearchOperations.search(stringQuery, EvalTaskDocument.class);
+            List<EvalTaskDocument> results = hits.stream()
+                    .map(org.springframework.data.elasticsearch.core.SearchHit::getContent)
+                    .collect(java.util.stream.Collectors.toList());
+            return ResultUtils.success(results);
+        }
+
+        // 默认返回所有
+        List<EvalTaskDocument> all = new java.util.ArrayList<>();
+        evalTaskEsRepository.findAll().forEach(all::add);
+        return ResultUtils.success(all);
     }
 }
