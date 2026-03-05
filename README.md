@@ -6,7 +6,7 @@ An asynchronous LLM evaluation platform designed to benchmark multiple AI models
 
 ## Architecture
 
-![Submit Page](docs/screenshots/system.png)
+![Submit Page](docs/screenshots/newsystem.png)
 
 ---
 
