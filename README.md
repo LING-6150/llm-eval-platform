@@ -31,30 +31,37 @@ An asynchronous LLM evaluation platform designed to benchmark multiple AI models
 ### 1. Async LLM Evaluation Pipeline
 - User submits prompt → API returns `taskId` immediately (non-blocking)
 - Apache Pulsar queues evaluation tasks for async processing
-- Batch consumption (1,000 msgs/batch) with exponential retry backoff (1s→60s)
+- Batch consumption with exponential retry backoff (1s→60s)
 - Dead-letter queue for permanently failed tasks
 - System sustained **4,800+ req/sec (P99 328ms)** under wrk load testing
 
-### 2. Redis Lua Atomic Deduplication
+### 2. Batch Evaluation (N × M Matrix)
+- Submit N prompts × M models in a single request
+- All task combinations queued to Pulsar and processed in parallel
+- Real-time status polling in the frontend until all tasks complete
+- Example: 2 prompts × 2 models = 4 tasks submitted and tracked simultaneously
+
+### 3. Redis Lua Atomic Deduplication
 - Prevents duplicate submissions within 60-second window using atomic Lua scripts
 - Race condition safe: Redis single-threaded execution guarantees atomicity
 
-### 3. Prompt Result Caching
+### 4. Prompt Result Caching
 - Identical prompt+model combinations served from Redis cache (1-hour TTL)
 - **Cache hit: 0ms latency, 0 tokens consumed** vs 1,962ms and 163 tokens on first inference
 - Eliminates redundant LLM API calls and reduces cost
 
-### 4. Multi-Model Evaluation
+### 5. Multi-Model Evaluation
 - Supports OpenAI (GPT-3.5-turbo, GPT-4) and DeepSeek
 - Unified Jackson-based response parsing across providers
-- Benchmarks: **GPT-3.5 avg 1,775ms vs DeepSeek avg 37,332ms** under identical prompts
+- Benchmarks: **GPT-3.5 avg 2–4s vs DeepSeek avg 21–37s** under identical prompts (8–20x difference)
+- Extensible: adding a new model requires only a single `case` in the routing switch
 
-### 5. Cost Analytics API
+### 6. Cost Analytics API
 - Per-model token consumption, average latency, and estimated cost tracking
 - Model pricing: $0.001–$0.03 per 1K tokens
 - Real-time comparison dashboard
 
-### 6. Elasticsearch Full-Text Search
+### 7. Elasticsearch Full-Text Search
 - Evaluation results indexed into Elasticsearch after completion
 - Supports full-text search on prompt content
 - Multi-dimensional filtering by model, status, and keywords
@@ -65,6 +72,10 @@ An asynchronous LLM evaluation platform designed to benchmark multiple AI models
 
 LLM inference latency ranges from 2–37 seconds depending on provider.
 To prevent blocking API requests, evaluation tasks are processed asynchronously via Apache Pulsar.
+
+### Why Batch Evaluation?
+
+When benchmarking multiple prompts across multiple models, serial execution wastes time. The N×M batch endpoint submits all combinations simultaneously to Pulsar, which processes them in parallel — significantly reducing total wall-clock time compared to sequential submission.
 
 ### Why Redis Lua Scripts?
 
@@ -91,9 +102,12 @@ TiDB provides horizontally scalable SQL storage for evaluation results and task 
 ### Model Comparison & Cost Analytics
 ![Stats Page](docs/screenshots/stats.png)
 
+### Batch Evaluation
+![Batch Page](docs/screenshots/batch1.png)
+![Batch Results](docs/screenshots/batch2.png)
 
-###[Grafana Dashboard
-![Stats Page](docs/screenshots/grafana.png)
+### Grafana Dashboard
+![Grafana](docs/screenshots/grafana.png)
 
 ---
 
@@ -104,8 +118,8 @@ TiDB provides horizontally scalable SQL storage for evaluation results and task 
 | Query endpoint throughput | 4,800+ req/sec |
 | P99 latency (query) | 328ms |
 | Cache hit latency | 0ms |
-| Cache miss latency (GPT-3.5) | ~1,775ms avg |
-| DeepSeek avg latency | ~37,332ms |
+| Cache miss latency (GPT-3.5) | 2–4s avg |
+| DeepSeek avg latency | 21–37s |
 | Token savings on cache hit | 100% |
 
 ---
@@ -121,7 +135,7 @@ TiDB provides horizontally scalable SQL storage for evaluation results and task 
 
 ```bash
 # Start Pulsar
-docker run -d --name pulsar \
+docker run -d -it --name pulsar \
   -p 6650:6650 -p 8080:8080 \
   apachepulsar/pulsar:3.3.0 \
   bin/pulsar standalone
@@ -173,18 +187,30 @@ npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/eval/submit` | Submit evaluation task |
+| POST | `/api/eval/submit` | Submit single evaluation task |
+| POST | `/api/eval/batch` | Submit N×M batch evaluation |
 | GET | `/api/eval/task/{id}` | Get task result |
 | GET | `/api/eval/list` | List all tasks |
 | GET | `/api/eval/stats` | Cost & latency analytics |
 | GET | `/api/eval/search` | Full-text search (ES) |
 
-### Submit Task Example
+### Submit Single Task
 
 ```bash
 curl -b cookies.txt -X POST http://localhost:9199/api/eval/submit \
   -H "Content-Type: application/json" \
   -d '{"promptText": "What is Apache Kafka?", "modelName": "gpt-3.5-turbo"}'
+```
+
+### Submit Batch Evaluation
+
+```bash
+curl -b cookies.txt -X POST http://localhost:9199/api/eval/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "promptTexts": ["What is Redis?", "What is Kafka?"],
+    "modelNames": ["gpt-3.5-turbo", "deepseek-chat"]
+  }'
 ```
 
 ### Search Example
@@ -215,13 +241,17 @@ Build time: ~41 seconds
 ```
 src/main/java/com/yuyuan/thumb/
 ├── controller/
-│   └── EvalController.java        # REST API endpoints
+│   └── EvalController.java        # REST API endpoints (submit, batch, list, stats, search)
 ├── listener/eval/
-│   ├── EvalConsumer.java          # Pulsar consumer + LLM calls
+│   ├── EvalConsumer.java          # Pulsar consumer + LLM calls + ES indexing
 │   └── EvalDlqConsumer.java       # Dead-letter queue handler
-├── model/entity/
-│   ├── EvalTask.java              # TiDB entity
-│   └── EvalTaskDocument.java      # Elasticsearch document
+├── model/
+│   ├── dto/eval/
+│   │   ├── SubmitEvalRequest.java # Single task request
+│   │   └── BatchEvalRequest.java  # Batch task request
+│   └── entity/
+│       ├── EvalTask.java          # TiDB entity
+│       └── EvalTaskDocument.java  # Elasticsearch document
 ├── repository/
 │   └── EvalTaskEsRepository.java  # ES repository
 ├── service/
