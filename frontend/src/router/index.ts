@@ -9,6 +9,7 @@ const router = createRouter({
     { path: '/submit', component: () => import('@/views/SubmitView.vue'), meta: { requiresAuth: true } },
     { path: '/tasks', component: () => import('@/views/TasksView.vue'), meta: { requiresAuth: true } },
     { path: '/stats', component: () => import('@/views/StatsView.vue'), meta: { requiresAuth: true } },
+    { path: '/batch', component: () => import('@/views/BatchView.vue'), meta: { requiresAuth: true } },
   ],
 })
 

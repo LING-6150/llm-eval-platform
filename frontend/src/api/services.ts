@@ -41,3 +41,6 @@ export const fetchTaskDetail = (taskId: string) =>
 
 export const fetchStats = () =>
   request.get<any, Stats>('/eval/stats')
+
+export const submitBatch = (promptTexts: string[], modelNames: string[]) =>
+  request.post('/eval/batch', { promptTexts, modelNames })

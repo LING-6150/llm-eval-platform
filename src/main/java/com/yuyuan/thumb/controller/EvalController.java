@@ -5,6 +5,7 @@ import com.yuyuan.thumb.common.BaseResponse;
 import com.yuyuan.thumb.common.ResultUtils;
 import com.yuyuan.thumb.constant.RedisLuaScriptConstant;
 import com.yuyuan.thumb.listener.thumb.msg.EvalEvent;
+import com.yuyuan.thumb.model.dto.eval.BatchEvalRequest;
 import com.yuyuan.thumb.model.dto.eval.SubmitEvalRequest;
 import com.yuyuan.thumb.model.entity.EvalTask;
 import com.yuyuan.thumb.model.entity.EvalTaskDocument;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 import com.yuyuan.thumb.repository.EvalTaskEsRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +109,45 @@ public class EvalController {
         });
 
         return ResultUtils.success(task.getId());
+    }
+
+    @PostMapping("/batch")
+    public BaseResponse<List<Long>> submitBatch(
+            @RequestBody BatchEvalRequest request,
+            HttpServletRequest httpRequest) {
+
+        User loginUser = userService.getLoginUser(httpRequest);
+        List<Long> taskIds = new ArrayList<>();
+
+        // N个prompt × M个模型 = N×M个任务
+        for (String prompt : request.getPromptTexts()) {
+            for (String model : request.getModelNames()) {
+                EvalTask task = new EvalTask();
+                task.setUserId(loginUser.getId());
+                task.setPromptText(prompt);
+                task.setModelName(model);
+                task.setStatus("pending");
+                evalTaskService.save(task);
+
+                EvalEvent event = EvalEvent.builder()
+                        .taskId(task.getId())
+                        .userId(loginUser.getId())
+                        .promptText(prompt)
+                        .modelName(model)
+                        .eventTime(LocalDateTime.now())
+                        .build();
+
+                pulsarTemplate.sendAsync("eval-topic", event).exceptionally(ex -> {
+                    log.error("Batch task send failed: taskId={}", task.getId(), ex);
+                    return null;
+                });
+
+                taskIds.add(task.getId());
+            }
+        }
+
+        log.info("Batch submitted: {} tasks for user {}", taskIds.size(), loginUser.getId());
+        return ResultUtils.success(taskIds);
     }
 
     @GetMapping("/list")
